@@ -10,7 +10,8 @@ import ast
 import jackett_client
 import data_store
 from config import (JACKETT_URL, JELLYFIN_URL,
-                    QBITTORRENT_PATH, QBITTORRENT_API_URL)
+                    QBITTORRENT_PATH, QBITTORRENT_API_URL,
+                    FOLDER_FILMS, FOLDER_SERIES)
 
 try:
     from config import TMDB_API_KEY
@@ -97,6 +98,46 @@ def _notify(title, msg):
         )
     except Exception:
         pass
+
+
+def _is_series(result):
+    """Detect TV series from Jackett category or SxxExx title pattern."""
+    cat = result.get("category", "").lower()
+    if any(k in cat for k in ("tv", "serie", "episode", "television")):
+        return True
+    if any(k in cat for k in ("movie", "film", "cinema", "bluray", "blu-ray")):
+        return False
+    return bool(re.search(r'\bS\d{1,2}E\d{1,2}\b', result.get("title", ""), re.IGNORECASE))
+
+
+def _save_path_for(result):
+    return FOLDER_SERIES if _is_series(result) else FOLDER_FILMS
+
+
+def _qbt_add(magnet, save_path):
+    """Add torrent via qBittorrent Web API with a specific save path.
+    Returns True on success, falls back to webbrowser on failure."""
+    try:
+        import urllib.request, urllib.parse
+        payload = urllib.parse.urlencode({
+            "urls":     magnet,
+            "savepath": save_path,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{QBITTORRENT_API_URL}/api/v2/torrents/add",
+            data=payload,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.read().strip() == b"Ok."
+    except Exception:
+        return False
+
+
+def _open_torrent(magnet, save_path):
+    """Send to qBittorrent API; fallback to webbrowser if API unreachable."""
+    if not _qbt_add(magnet, save_path):
+        webbrowser.open(magnet)
 
 
 def _detect_quality(title):
@@ -875,10 +916,12 @@ class TorrentApp:
             return
         link = r.get("magnet")
         if link:
-            self._footer("Ouverture dans qBittorrent...", GREEN)
+            save_path = _save_path_for(r)
+            self._footer(
+                f"Envoi vers {'Series TV' if _is_series(r) else 'Films'}...", GREEN)
             quality = _detect_quality(r.get("title", ""))
             data_store.add_to_dl_history(r.get("title", ""), r.get("title", ""), quality)
-            webbrowser.open(link)
+            _open_torrent(link, save_path)
         else:
             self._footer("Aucun lien de telechargement disponible.", RED)
 
@@ -958,10 +1001,14 @@ class TorrentApp:
             return
         link = item.get("found_link")
         if link:
-            self.lbl_wish_footer.config(text="Ouverture dans qBittorrent...", fg=GREEN)
-            quality = _detect_quality(item.get("found_title", ""))
-            data_store.add_to_dl_history(item["title"], item.get("found_title", ""), quality)
-            webbrowser.open(link)
+            found   = item.get("found_title", "")
+            series  = bool(re.search(r'\bS\d{1,2}E\d{1,2}\b', found, re.IGNORECASE))
+            sp      = FOLDER_SERIES if series else FOLDER_FILMS
+            self.lbl_wish_footer.config(
+                text=f"Envoi vers {'Series TV' if series else 'Films'}...", fg=GREEN)
+            quality = _detect_quality(found)
+            data_store.add_to_dl_history(item["title"], found, quality)
+            _open_torrent(link, sp)
         else:
             self.lbl_wish_footer.config(
                 text="Pas de lien — lancez 'Verifier tout' d'abord.", fg=AMBER)
@@ -996,7 +1043,8 @@ class TorrentApp:
                     )
                     data_store.add_to_dl_history(item["title"], best.get("title", ""), quality)
                     if link:
-                        self.root.after(0, webbrowser.open, link)
+                        sp = _save_path_for(best)
+                        self.root.after(0, _open_torrent, link, sp)
                         _notify("TorrentBot — Telechargement lance",
                                 f"{item['title']} ({quality or 'qualite inconnue'})")
                 else:
