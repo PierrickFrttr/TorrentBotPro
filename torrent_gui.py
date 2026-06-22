@@ -406,11 +406,12 @@ class TorrentApp:
         tbl = tk.Frame(f, bg=BG)
         tbl.pack(fill=tk.BOTH, expand=True, padx=32)
         self.wish_tree = ttk.Treeview(tbl,
-            columns=("title", "added", "status"), show="headings", selectmode="browse")
+            columns=("title", "found", "added", "status"), show="headings", selectmode="browse")
         for col, head, w, anc in [
-            ("title",  "TITRE",  500, "w"),
-            ("added",  "AJOUTE", 120, "center"),
-            ("status", "STATUT", 130, "center"),
+            ("title",  "TITRE",          280, "w"),
+            ("found",  "TORRENT TROUVE", 340, "w"),
+            ("added",  "AJOUTE",         100, "center"),
+            ("status", "STATUT",         110, "center"),
         ]:
             self.wish_tree.heading(col, text=head, anchor=anc)
             self.wish_tree.column(col, width=w, anchor=anc, stretch=False, minwidth=80)
@@ -711,8 +712,10 @@ class TorrentApp:
     def _apply_resize(self, width):
         self._resize_id = None
         avail = width - _PADDING_W - _SCROLLBAR_W
-        self.tree.column("title",      width=max(150, avail - _FIXED_COLS_W))
-        self.wish_tree.column("title", width=max(150, avail - 120 - 130))
+        self.tree.column("title",       width=max(150, avail - _FIXED_COLS_W))
+        wish_avail = max(300, avail - 100 - 110)
+        self.wish_tree.column("title", width=max(120, wish_avail // 2))
+        self.wish_tree.column("found", width=max(120, wish_avail - wish_avail // 2))
         self.reco_tree.column("title", width=max(180, avail - _INFO_PANEL_W - 12 - 80 - 160 - 80))
         self.hist_tree.column("title", width=max(200, avail - 90 - 160))
 
@@ -907,8 +910,10 @@ class TorrentApp:
             self.wish_tree.delete(iid)
         for item in wishlist:
             iid = item["id"]
+            found_title = str(item.get("found_title") or "")
             self.wish_tree.insert("", tk.END, iid=iid, tags=(item["status"],),
                                   values=(str(item.get("title", "")),
+                                          found_title,
                                           str(item.get("added", "")),
                                           _status_label(item.get("status", "pending"))))
             self._wish_map[iid] = item
