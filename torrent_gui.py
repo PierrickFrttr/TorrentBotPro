@@ -834,7 +834,7 @@ class TorrentApp:
 
     def _search_worker(self, query):
         try:
-            results = jackett_client.search(query, timeout=10)
+            results = jackett_client.search(query)
             self.root.after(0, self._on_search_done, results)
         except Exception as e:
             self.root.after(0, self._on_search_error, str(e))
@@ -1054,7 +1054,7 @@ class TorrentApp:
     def _check_wishlist_worker(self, items):
         for item in items:
             try:
-                results = jackett_client.search(item["title"], timeout=10)
+                results = jackett_client.search(item["title"])
                 if results:
                     best    = _best_result(results, PREFERRED_QUALITY)
                     link    = best.get("magnet")

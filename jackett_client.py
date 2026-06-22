@@ -11,7 +11,7 @@ def _format_size(size_bytes):
 _FRENCH_TAGS = ("FRENCH", "TRUEFRENCH", "VFF", "VF", "VOSTFR", "MULTI")
 
 
-def search(query, timeout=15):
+def search(query, timeout=60):
     """Interroge Jackett et retourne les résultats triés par seeders."""
     q = query.strip()
     if not any(t in q.upper() for t in _FRENCH_TAGS):
@@ -24,6 +24,8 @@ def search(query, timeout=15):
         data = response.json()
     except requests.exceptions.ConnectionError:
         raise ConnectionError(f"Jackett ne répond pas sur {JACKETT_URL}. Vérifiez qu'il est lancé.")
+    except requests.exceptions.ReadTimeout:
+        raise TimeoutError(f"Jackett n'a pas repondu en {timeout}s — trop d'indexeurs actifs ?")
     except Exception as e:
         raise RuntimeError(f"Erreur Jackett : {e}")
 
