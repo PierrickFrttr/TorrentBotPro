@@ -11,7 +11,7 @@ import jackett_client
 import data_store
 from config import (JACKETT_URL, JELLYFIN_URL,
                     QBITTORRENT_PATH, QBITTORRENT_API_URL,
-                    FOLDER_FILMS, FOLDER_SERIES)
+                    FOLDER_FILMS, FOLDER_SERIES, JACKETT_PATH)
 
 try:
     from config import TMDB_API_KEY
@@ -77,6 +77,18 @@ _QUALITY_KW = {
 
 
 # ── Module-level helpers ───────────────────────────────────────────────────────
+
+def _check_service(url, timeout=2):
+    """Returns True if the URL responds (even with an HTTP error like 401)."""
+    try:
+        import urllib.request, urllib.error
+        urllib.request.urlopen(url, timeout=timeout)
+        return True
+    except urllib.error.HTTPError:
+        return True   # service is up, just returned 4xx/5xx
+    except Exception:
+        return False
+
 
 def _notify(title, msg):
     """Windows balloon-tip notification via PowerShell (no extra deps)."""
@@ -196,6 +208,7 @@ class TorrentApp:
         self._wish_map      = {}
         self._reco_results  = []
         self._poster_ref    = None
+        self._status_dots   = {}   # populated in _build_topbar
 
         root.title("TorrentBot")
         root.configure(bg=BG)
@@ -212,6 +225,8 @@ class TorrentApp:
         threading.Thread(target=self._auto_check_wishlist, daemon=True).start()
         threading.Thread(target=self._load_genres_worker, daemon=True).start()
         threading.Thread(target=self._completion_watcher, daemon=True).start()
+        threading.Thread(target=self._launch_jackett_if_needed, daemon=True).start()
+        threading.Thread(target=self._service_watcher, daemon=True).start()
 
     # ── Styles ──────────────────────────────────────────────────────────────
 
@@ -281,21 +296,30 @@ class TorrentApp:
             btn.pack(side=tk.LEFT, padx=2)
             self._tab_btns[key] = btn
 
-        # Right-side buttons
-        for text, cmd in [("qBittorrent", self.open_qbittorrent),
-                          ("Sources", self.open_jackett),
-                          ("Bibliotheque", self.open_jellyfin)]:
-            tk.Button(bar, text=text, command=cmd,
-                      bg=SURFACE, fg=SUB, font=F_SMALL,
-                      borderwidth=0, relief="flat", padx=12, pady=7,
-                      cursor="hand2", activebackground=SURF2, activeforeground=TEXT,
-                      ).pack(side=tk.RIGHT, padx=3, pady=10)
-
+        # Right-side: settings gear
         tk.Button(bar, text="⚙", command=self._open_settings,
                   bg=SURFACE, fg=SUB, font=("Segoe UI", 12),
                   borderwidth=0, relief="flat", padx=10, pady=5,
                   cursor="hand2", activebackground=SURF2, activeforeground=TEXT,
                   ).pack(side=tk.RIGHT, padx=(8, 0), pady=10)
+
+        # Right-side: service buttons with status dots
+        for key, text, cmd in [
+            ("qbt",      "qBittorrent",  self.open_qbittorrent),
+            ("jackett",  "Jackett",      self.open_jackett),
+            ("jellyfin", "Bibliotheque", self.open_jellyfin),
+        ]:
+            sf = tk.Frame(bar, bg=SURFACE)
+            sf.pack(side=tk.RIGHT, padx=4, pady=10)
+            dot = tk.Label(sf, text="●", font=("Segoe UI", 7),
+                           bg=SURFACE, fg=SUB)
+            dot.pack(side=tk.LEFT, padx=(0, 2))
+            tk.Button(sf, text=text, command=cmd,
+                      bg=SURFACE, fg=SUB, font=F_SMALL,
+                      borderwidth=0, relief="flat", padx=8, pady=7,
+                      cursor="hand2", activebackground=SURF2, activeforeground=TEXT,
+                      ).pack(side=tk.LEFT)
+            self._status_dots[key] = dot
 
         tk.Frame(self.root, bg=BORDER, height=1).pack(fill=tk.X)
 
@@ -1400,6 +1424,51 @@ class TorrentApp:
                 text="Sauvegarde. Relancez l'app pour appliquer.", fg=GREEN)
         except Exception as e:
             lbl_msg.config(text=f"Erreur : {e}", fg=RED)
+
+    # ── Service health ────────────────────────────────────────────────────────
+
+    def _launch_jackett_if_needed(self):
+        import time
+        if _check_service(JACKETT_URL, timeout=2):
+            return  # already running
+        try:
+            subprocess.Popen(
+                [JACKETT_PATH],
+                creationflags=0x08000000,   # CREATE_NO_WINDOW
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            # Wait up to 12 s for Jackett to be ready
+            for _ in range(6):
+                time.sleep(2)
+                if _check_service(JACKETT_URL, timeout=2):
+                    break
+        except FileNotFoundError:
+            pass  # JACKETT_PATH incorrect — user can fix in Settings
+        except Exception:
+            pass
+
+    def _service_watcher(self):
+        import time
+        # First check right away so dots light up quickly at startup
+        self._do_service_check()
+        while True:
+            time.sleep(15)
+            self._do_service_check()
+
+    def _do_service_check(self):
+        statuses = {
+            "jackett":  _check_service(JACKETT_URL),
+            "jellyfin": _check_service(JELLYFIN_URL),
+            "qbt":      _check_service(f"{QBITTORRENT_API_URL}/api/v2/app/version"),
+        }
+        self.root.after(0, self._update_status_dots, statuses)
+
+    def _update_status_dots(self, statuses):
+        for key, ok in statuses.items():
+            dot = self._status_dots.get(key)
+            if dot:
+                dot.config(fg=GREEN if ok else RED)
 
     # ── Icon / navigation ────────────────────────────────────────────────────
 
