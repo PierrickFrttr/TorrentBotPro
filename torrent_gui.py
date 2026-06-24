@@ -834,15 +834,37 @@ class TorrentApp:
 
     def _search_worker(self, query):
         try:
-            results = jackett_client.search(query)
-            self.root.after(0, self._on_search_done, results)
+            fallback = self._tmdb_original_title(query) if TMDB_API_KEY else None
+            results, label = jackett_client.search(query, fallback_title=fallback)
+            self.root.after(0, self._on_search_done, results, label)
         except Exception as e:
             self.root.after(0, self._on_search_error, str(e))
 
-    def _on_search_done(self, results):
+    def _tmdb_original_title(self, query):
+        """Return original (non-French) title from TMDB, or None."""
+        try:
+            import urllib.request, urllib.parse, json as _json
+            q   = urllib.parse.quote(query)
+            url = (f"https://api.themoviedb.org/3/search/multi"
+                   f"?api_key={TMDB_API_KEY}&query={q}&language=fr-FR")
+            with urllib.request.urlopen(url, timeout=4) as r:
+                data = _json.loads(r.read())
+            hits = data.get("results", [])
+            if hits:
+                orig = hits[0].get("original_title") or hits[0].get("original_name")
+                fr   = hits[0].get("title") or hits[0].get("name") or ""
+                # only return original if it differs from French title
+                if orig and orig.lower() != fr.lower():
+                    return orig
+        except Exception:
+            pass
+        return None
+
+    def _on_search_done(self, results, label="exacte"):
         self._stop_animate()
         self.results = results
         self.btn_search.config(state=tk.NORMAL, bg=ACCENT, fg="white")
+        self._search_label = label
         self._apply_filters()
 
     def _on_search_error(self, msg):
@@ -881,10 +903,12 @@ class TorrentApp:
 
         n_all  = len(self.results)
         n_show = len(results)
+        label  = getattr(self, "_search_label", "exacte")
+        hint   = "" if label == "exacte" else f"  —  recherche {label}"
         if n_show == n_all:
-            self._status(f"{n_all} resultats  -  tries par popularite")
+            self._status(f"{n_all} resultats{hint}")
         else:
-            self._status(f"{n_show} / {n_all} resultats  (filtres actifs)")
+            self._status(f"{n_show} / {n_all} resultats  (filtres actifs){hint}")
 
     def _render_tree(self):
         for iid in self.tree.get_children():
@@ -1054,7 +1078,8 @@ class TorrentApp:
     def _check_wishlist_worker(self, items):
         for item in items:
             try:
-                results = jackett_client.search(item["title"])
+                fallback = self._tmdb_original_title(item["title"]) if TMDB_API_KEY else None
+                results, _ = jackett_client.search(item["title"], fallback_title=fallback)
                 if results:
                     best    = _best_result(results, PREFERRED_QUALITY)
                     link    = best.get("magnet")
