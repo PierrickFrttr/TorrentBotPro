@@ -1457,8 +1457,11 @@ class TorrentApp:
         if _check_service(JACKETT_URL, timeout=2):
             return  # already running
         try:
+            cmd = (["wscript.exe", JACKETT_PATH]
+                   if JACKETT_PATH.lower().endswith(".vbs")
+                   else [JACKETT_PATH])
             subprocess.Popen(
-                [JACKETT_PATH],
+                cmd,
                 creationflags=0x08000000,   # CREATE_NO_WINDOW
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
