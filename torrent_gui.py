@@ -92,6 +92,12 @@ def _check_service(url, timeout=2):
 
 def _notify(title, msg):
     """Windows balloon-tip notification via PowerShell (no extra deps)."""
+    if os.name != "nt":
+        try:
+            subprocess.Popen(["notify-send", title, msg])
+        except Exception:
+            pass
+        return
     try:
         t = title.replace('"', '').replace("\n", " ")[:60]
         m = msg.replace('"', '').replace("\n", " ")[:160]
@@ -141,7 +147,9 @@ def _qbt_add(magnet, save_path):
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         with urllib.request.urlopen(req, timeout=5) as r:
-            return r.read().strip() == b"Ok."
+            body = r.read().strip()
+            # qBittorrent < 5.1 : "Ok." ; >= 5.1 : JSON + HTTP 202
+            return body == b"Ok." or (r.status in (200, 202) and body.startswith(b"{"))
     except Exception:
         return False
 
@@ -1509,6 +1517,9 @@ class TorrentApp:
                 pass
 
     def open_qbittorrent(self):
+        if os.name != "nt":
+            webbrowser.open(QBITTORRENT_API_URL)
+            return
         try:
             subprocess.Popen([QBITTORRENT_PATH])
         except FileNotFoundError:
